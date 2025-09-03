@@ -3,7 +3,13 @@
 Test script to verify the enhanced Baghchal AlphaZero system.
 """
 
+import sys
+import os
 import numpy as np
+
+# Add parent directory to path to allow imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from baghchal import BaghChalGame
 from models.neural_network import create_bagh_chal_model
 from models.utils import PerformanceEvaluator
