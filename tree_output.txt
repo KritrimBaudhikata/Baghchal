@@ -1,0 +1,24 @@
+├── .gitignore
+├── Baghchal.docx
+├── README.md
+├── baghchal.py
+├── main.py
+├── models
+│   ├── __init__.py
+│   ├── neural_network.py
+│   └── utils.py
+├── notebooks
+│   ├── exploration.ipynb
+│   └── test.ipynb
+├── requirements.txt
+├── structure.py
+├── tests
+│   └── test_system.py
+├── training
+│   ├── __init__.py
+│   ├── mcts.py
+│   ├── self_play.py
+│   ├── self_play_debug.py
+│   └── training_loop.py
+├── tree.txt
+└── tree_output.txt
