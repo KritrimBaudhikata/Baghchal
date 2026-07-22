@@ -1,382 +1,374 @@
-import numpy as np
-import matplotlib.pyplot as plt
+import copy
 import json
-import os
 from datetime import datetime
+
+import matplotlib.pyplot as plt
+import numpy as np
+
 from baghchal import BaghChalGame
 from training.mcts import MCTS
+from training.self_play import select_action
 
 
 class PerformanceEvaluator:
-    """
-    Comprehensive performance evaluation for Baghchal AI models.
-    Includes ELO rating calculation, game analysis, and performance tracking.
-    """
-    
     def __init__(self, base_elo=1200):
         self.base_elo = base_elo
         self.elo_history = []
         self.game_results = []
-        
+
     def calculate_elo_change(self, player_elo, opponent_elo, result, k_factor=32):
-        """
-        Calculate ELO rating change based on game result.
-        
-        :param player_elo: Current ELO rating of the player
-        :param opponent_elo: Current ELO rating of the opponent
-        :param result: 1 for win, 0.5 for draw, 0 for loss
-        :param k_factor: K-factor for rating volatility
-        :return: ELO change
-        """
         expected_score = 1 / (1 + 10 ** ((opponent_elo - player_elo) / 400))
-        elo_change = k_factor * (result - expected_score)
-        return elo_change
-    
+        return k_factor * (result - expected_score)
+
     def update_elo(self, current_elo, elo_change):
-        """Update ELO rating"""
-        new_elo = current_elo + elo_change
-        return max(100, new_elo)  # Minimum ELO of 100
-    
-    def evaluate_model_against_random(self, model, num_games=50, num_simulations=100):
-        """
-        Evaluate model performance against random play.
-        
-        :param model: Neural network model
-        :param num_games: Number of games to play
-        :param num_simulations: MCTS simulations per move
-        :return: Win rate and ELO estimate
-        """
-        game = BaghChalGame()
-        mcts = MCTS(game, model, num_simulations=num_simulations)
-        
-        wins = 0
-        losses = 0
-        draws = 0
-        game_lengths = []
-        
-        print(f"Evaluating model against random play ({num_games} games)...")
-        
-        for game_num in range(num_games):
-            game.reset()
-            current_game = copy.deepcopy(game)
-            move_count = 0
-            
-            while current_game.status == "ongoing" and move_count < 200:
-                state = current_game.serialize_state_binary()
-                player = current_game.current_player()
-                
-                if player == "tiger":
-                    # Use MCTS for tiger
-                    try:
-                        root_node = mcts.search(state)
-                        action = self._select_best_action(root_node)
-                    except Exception as e:
-                        print(f"MCTS failed in game {game_num}: {e}")
-                        break
-                else:
-                    # Random play for goat
-                    piece_type = 2
-                    valid_actions = current_game.get_valid_moves(piece_type=piece_type)
-                    if valid_actions:
-                        action = valid_actions[np.random.randint(len(valid_actions))]
-                    else:
-                        break
-                
-                # Apply action
-                try:
-                    if len(action) == 1:
-                        current_game.place_goat(action[0])
-                    else:
-                        current_game.make_move(action[0], action[1])
-                except Exception as e:
-                    print(f"Action failed in game {game_num}: {e}")
-                    break
-                
-                move_count += 1
-                
-                if current_game.check_victory_conditions() != "ongoing":
-                    break
-            
-            # Record result
-            if current_game.status == "tiger_win":
-                wins += 1
-            elif current_game.status == "goat_win":
-                losses += 1
-            else:
-                draws += 1
-            
-            game_lengths.append(move_count)
-            
-            if (game_num + 1) % 10 == 0:
-                print(f"Completed {game_num + 1}/{num_games} games")
-        
-        win_rate = wins / num_games
-        loss_rate = losses / num_games
-        draw_rate = draws / num_games
-        avg_game_length = np.mean(game_lengths)
-        
-        # Estimate ELO rating based on win rate against random (assumed ELO 1200)
-        if win_rate > 0.5:
-            # Calculate ELO difference needed for this win rate
-            elo_diff = 400 * np.log10(win_rate / (1 - win_rate))
-            estimated_elo = self.base_elo + elo_diff
-        else:
-            estimated_elo = self.base_elo
-        
-        print(f"\nEvaluation Results:")
-        print(f"Games played: {num_games}")
-        print(f"Wins: {wins} ({win_rate:.3f})")
-        print(f"Losses: {losses} ({loss_rate:.3f})")
-        print(f"Draws: {draws} ({draw_rate:.3f})")
-        print(f"Average game length: {avg_game_length:.1f} moves")
-        print(f"Estimated ELO rating: {estimated_elo:.0f}")
-        
-        return {
-            'win_rate': win_rate,
-            'loss_rate': loss_rate,
-            'draw_rate': draw_rate,
-            'avg_game_length': avg_game_length,
-            'estimated_elo': estimated_elo,
-            'total_games': num_games
-        }
-    
+        return max(100, current_elo + elo_change)
+
     def _select_best_action(self, root_node):
-        """Select the best action from MCTS root node"""
         if not root_node.children:
             return None
-        
         best_action = None
         best_visits = -1
-        
         for action, child in root_node.children.items():
             if child.visit_count > best_visits:
                 best_visits = child.visit_count
                 best_action = action
-        
         return best_action
-    
-    def evaluate_model_against_baseline(self, model, baseline_model, num_games=20, num_simulations=100):
-        """
-        Evaluate model performance against a baseline model.
-        
-        :param model: Model to evaluate
-        :param baseline_model: Baseline model for comparison
-        :param num_games: Number of games to play
-        :param num_simulations: MCTS simulations per move
-        :return: Performance comparison
-        """
+
+    def _mcts_action(self, mcts, game_state):
+        root_node = mcts.search(game_state)
+        return self._select_best_action(root_node)
+
+    def _random_action(self, game_state):
+        valid_actions = game_state.legal_actions()
+        if not valid_actions:
+            return None
+        return valid_actions[np.random.randint(len(valid_actions))]
+
+    def _heuristic_action(self, game_state):
+        valid_actions = game_state.legal_actions()
+        if not valid_actions:
+            return None
+        player = game_state.current_player()
+        if player == "tiger":
+            capture_actions = []
+            for action in valid_actions:
+                if len(action) != 2:
+                    continue
+                start, end = action
+                if abs(end[0] - start[0]) == 2 or abs(end[1] - start[1]) == 2:
+                    capture_actions.append(action)
+            if capture_actions:
+                return capture_actions[np.random.randint(len(capture_actions))]
+        return valid_actions[np.random.randint(len(valid_actions))]
+
+    def _build_agent(self, kind, model=None, num_simulations=100):
+        if kind == "random":
+            return {"kind": kind}
+        if kind == "heuristic":
+            return {"kind": kind}
+        if kind == "model":
+            if model is None:
+                raise ValueError("model agent requires a model instance")
+            return {
+                "kind": kind,
+                "mcts": MCTS(BaghChalGame(), model, num_simulations=num_simulations),
+            }
+        raise ValueError(f"Unknown agent kind: {kind}")
+
+    def _choose_action(self, agent, game_state):
+        if agent["kind"] == "random":
+            return self._random_action(game_state)
+        if agent["kind"] == "heuristic":
+            return self._heuristic_action(game_state)
+        if agent["kind"] == "model":
+            return self._mcts_action(agent["mcts"], game_state)
+        return None
+
+    def _model_result_from_status(self, status, model_side):
+        if status == "draw":
+            return 0.5
+        if status == "tiger_win":
+            return 1.0 if model_side == "tiger" else 0.0
+        if status == "goat_win":
+            return 1.0 if model_side == "goat" else 0.0
+        return 0.0
+
+    def _play_single_game(self, tiger_agent, goat_agent, max_moves=200):
         game = BaghChalGame()
-        mcts_model = MCTS(game, model, num_simulations=num_simulations)
-        mcts_baseline = MCTS(game, baseline_model, num_simulations=num_simulations)
-        
-        model_wins = 0
-        baseline_wins = 0
+        move_count = 0
+
+        while game.status == "ongoing" and move_count < max_moves:
+            player = game.current_player()
+            agent = tiger_agent if player == "tiger" else goat_agent
+            action = self._choose_action(agent, game)
+            if action is None or not game.apply_action(action):
+                game.check_victory_conditions()
+                if game.status == "ongoing":
+                    game.status = "draw"
+                break
+            move_count += 1
+            game.check_victory_conditions()
+
+        if game.status == "ongoing":
+            game.status = "draw"
+        return game.status, move_count
+
+    def _evaluate_model_matchup(
+        self,
+        model,
+        opponent_kind,
+        num_games=20,
+        num_simulations=100,
+        opponent_model=None,
+        swap_sides=True,
+    ):
+        if opponent_kind == "model" and opponent_model is None:
+            raise ValueError("opponent_model must be provided for opponent_kind='model'")
+
+        model_points = 0.0
+        tiger_side_games = 0
+        goat_side_games = 0
+        model_tiger_wins = 0
+        model_goat_wins = 0
         draws = 0
-        
-        print(f"Evaluating model against baseline ({num_games} games)...")
-        
-        for game_num in range(num_games):
-            game.reset()
-            current_game = copy.deepcopy(game)
-            move_count = 0
-            
-            while current_game.status == "ongoing" and move_count < 200:
-                state = current_game.serialize_state_binary()
-                player = current_game.current_player()
-                
-                if player == "tiger":
-                    # Model plays tiger
-                    try:
-                        root_node = mcts_model.search(state)
-                        action = self._select_best_action(root_node)
-                    except Exception as e:
-                        print(f"Model MCTS failed: {e}")
-                        break
-                else:
-                    # Baseline plays goat
-                    try:
-                        root_node = mcts_baseline.search(state)
-                        action = self._select_best_action(root_node)
-                    except Exception as e:
-                        print(f"Baseline MCTS failed: {e}")
-                        break
-                
-                # Apply action
-                try:
-                    if len(action) == 1:
-                        current_game.place_goat(action[0])
-                    else:
-                        current_game.make_move(action[0], action[1])
-                except Exception as e:
-                    print(f"Action failed: {e}")
-                    break
-                
-                move_count += 1
-                
-                if current_game.check_victory_conditions() != "ongoing":
-                    break
-            
-            # Record result
-            if current_game.status == "tiger_win":
-                model_wins += 1
-            elif current_game.status == "goat_win":
-                baseline_wins += 1
+        total_moves = 0
+
+        for game_index in range(num_games):
+            model_side = "tiger"
+            if swap_sides and game_index % 2 == 1:
+                model_side = "goat"
+
+            model_agent = self._build_agent("model", model=model, num_simulations=num_simulations)
+            if opponent_kind == "model":
+                opponent_agent = self._build_agent("model", model=opponent_model, num_simulations=num_simulations)
             else:
+                opponent_agent = self._build_agent(opponent_kind)
+
+            tiger_agent = model_agent if model_side == "tiger" else opponent_agent
+            goat_agent = model_agent if model_side == "goat" else opponent_agent
+
+            status, moves = self._play_single_game(tiger_agent, goat_agent)
+            total_moves += moves
+
+            if model_side == "tiger":
+                tiger_side_games += 1
+                if status == "tiger_win":
+                    model_tiger_wins += 1
+            else:
+                goat_side_games += 1
+                if status == "goat_win":
+                    model_goat_wins += 1
+
+            if status == "draw":
                 draws += 1
-            
-            if (game_num + 1) % 5 == 0:
-                print(f"Completed {game_num + 1}/{num_games} games")
-        
-        model_win_rate = model_wins / num_games
-        baseline_win_rate = baseline_wins / num_games
-        draw_rate = draws / num_games
-        
-        print(f"\nModel vs Baseline Results:")
-        print(f"Model wins: {model_wins} ({model_win_rate:.3f})")
-        print(f"Baseline wins: {baseline_wins} ({baseline_win_rate:.3f})")
-        print(f"Draws: {draws} ({draw_rate:.3f})")
-        
+
+            model_points += self._model_result_from_status(status, model_side)
+
+        max_points = float(num_games)
+        model_score_rate = model_points / max_points if max_points > 0 else 0.0
+        avg_game_length = total_moves / num_games if num_games > 0 else 0.0
+
         return {
-            'model_wins': model_wins,
-            'baseline_wins': baseline_wins,
-            'draws': draws,
-            'model_win_rate': model_win_rate,
-            'baseline_win_rate': baseline_win_rate,
-            'draw_rate': draw_rate
+            "opponent": opponent_kind if opponent_kind != "model" else "previous_checkpoint",
+            "games": num_games,
+            "model_points": model_points,
+            "max_points": max_points,
+            "model_score_rate": model_score_rate,
+            "model_tiger_wins": model_tiger_wins,
+            "model_goat_wins": model_goat_wins,
+            "draws": draws,
+            "tiger_side_games": tiger_side_games,
+            "goat_side_games": goat_side_games,
+            "avg_game_length": avg_game_length,
         }
-    
+
+    def evaluate_model_arena(
+        self,
+        model,
+        num_games_per_opponent=20,
+        num_simulations=100,
+        include_random=True,
+        include_heuristic=True,
+        previous_model=None,
+        swap_sides=True,
+    ):
+        opponents = []
+        if include_random:
+            opponents.append(("random", None))
+        if include_heuristic:
+            opponents.append(("heuristic", None))
+        if previous_model is not None:
+            opponents.append(("model", previous_model))
+
+        matchup_results = []
+        for opponent_kind, opponent_model in opponents:
+            result = self._evaluate_model_matchup(
+                model=model,
+                opponent_kind=opponent_kind,
+                opponent_model=opponent_model,
+                num_games=num_games_per_opponent,
+                num_simulations=num_simulations,
+                swap_sides=swap_sides,
+            )
+            matchup_results.append(result)
+
+        total_games = sum(item["games"] for item in matchup_results)
+        total_points = sum(item["model_points"] for item in matchup_results)
+        max_points = float(total_games)
+        aggregate_score_rate = total_points / max_points if max_points > 0 else 0.0
+
+        return {
+            "total_games": total_games,
+            "model_points": total_points,
+            "max_points": max_points,
+            "aggregate_score_rate": aggregate_score_rate,
+            "matchups": matchup_results,
+        }
+
+    def evaluate_model_against_random(self, model, num_games=50, num_simulations=100):
+        random_result = self._evaluate_model_matchup(
+            model=model,
+            opponent_kind="random",
+            num_games=num_games,
+            num_simulations=num_simulations,
+            swap_sides=True,
+        )
+
+        score_rate = random_result["model_score_rate"]
+        if score_rate <= 0 or score_rate >= 1:
+            estimated_elo = self.base_elo
+        else:
+            elo_diff = 400 * np.log10(score_rate / (1 - score_rate))
+            estimated_elo = self.base_elo + elo_diff
+
+        return {
+            "win_rate": score_rate,
+            "loss_rate": max(0.0, 1.0 - score_rate),
+            "draw_rate": random_result["draws"] / num_games if num_games else 0.0,
+            "avg_game_length": random_result["avg_game_length"],
+            "estimated_elo": estimated_elo,
+            "total_games": num_games,
+            "model_score_rate": score_rate,
+            "model_points": random_result["model_points"],
+            "max_points": random_result["max_points"],
+            "model_tiger_wins": random_result["model_tiger_wins"],
+            "model_goat_wins": random_result["model_goat_wins"],
+        }
+
+    def evaluate_model_against_baseline(self, model, baseline_model, num_games=20, num_simulations=100):
+        result = self._evaluate_model_matchup(
+            model=model,
+            opponent_kind="model",
+            opponent_model=baseline_model,
+            num_games=num_games,
+            num_simulations=num_simulations,
+            swap_sides=True,
+        )
+        return {
+            "model_wins": result["model_tiger_wins"] + result["model_goat_wins"],
+            "baseline_wins": num_games - (result["model_tiger_wins"] + result["model_goat_wins"] + result["draws"]),
+            "draws": result["draws"],
+            "model_win_rate": result["model_score_rate"],
+            "baseline_win_rate": max(0.0, 1.0 - result["model_score_rate"]),
+            "draw_rate": result["draws"] / num_games if num_games else 0.0,
+            "model_score_rate": result["model_score_rate"],
+            "model_points": result["model_points"],
+            "max_points": result["max_points"],
+        }
+
     def analyze_game_quality(self, game_history):
-        """
-        Analyze the quality of games for training data.
-        
-        :param game_history: List of game states and actions
-        :return: Quality metrics
-        """
         if not game_history:
             return {}
-        
-        # Calculate various quality metrics
+
         game_lengths = []
         action_diversities = []
         value_consistencies = []
-        
+
         for game_data in game_history:
             if len(game_data) >= 3:
                 states, policies, values, masks = zip(*game_data)
-                
-                # Game length
                 game_lengths.append(len(states))
-                
-                # Action diversity (entropy of policy)
+
                 policy_entropies = []
                 for policy in policies:
                     valid_probs = policy[policy > 0]
                     if len(valid_probs) > 1:
                         entropy = -np.sum(valid_probs * np.log(valid_probs + 1e-10))
                         policy_entropies.append(entropy)
-                
+
                 if policy_entropies:
                     action_diversities.append(np.mean(policy_entropies))
-                
-                # Value consistency (how much values change during the game)
+
                 if len(values) > 1:
                     value_changes = np.abs(np.diff(values))
                     value_consistencies.append(np.mean(value_changes))
-        
-        quality_metrics = {
-            'avg_game_length': np.mean(game_lengths) if game_lengths else 0,
-            'avg_action_diversity': np.mean(action_diversities) if action_diversities else 0,
-            'avg_value_consistency': np.mean(value_consistencies) if value_consistencies else 0,
-            'total_games': len(game_history),
-            'total_positions': sum(len(game) for game in game_history)
+
+        return {
+            "avg_game_length": np.mean(game_lengths) if game_lengths else 0,
+            "avg_action_diversity": np.mean(action_diversities) if action_diversities else 0,
+            "avg_value_consistency": np.mean(value_consistencies) if value_consistencies else 0,
+            "total_games": len(game_history),
+            "total_positions": sum(len(game) for game in game_history),
         }
-        
-        return quality_metrics
-    
+
     def save_evaluation_results(self, results, filename=None):
-        """Save evaluation results to file"""
         if filename is None:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"evaluation_results_{timestamp}.json"
-        
-        with open(filename, 'w') as f:
-            json.dump(results, f, indent=2)
-        
+        with open(filename, "w") as handle:
+            json.dump(results, handle, indent=2)
         print(f"Evaluation results saved to {filename}")
-    
+
     def plot_performance_trends(self, save_path="performance_trends.png"):
-        """Plot performance trends over time"""
         if not self.elo_history:
             print("No ELO history to plot")
             return
-        
+
         plt.figure(figsize=(12, 8))
-        
-        # ELO progression
+
         plt.subplot(2, 2, 1)
         iterations = range(len(self.elo_history))
-        plt.plot(iterations, self.elo_history, 'b-', linewidth=2)
-        plt.title('ELO Rating Progression')
-        plt.xlabel('Training Iteration')
-        plt.ylabel('ELO Rating')
+        plt.plot(iterations, self.elo_history, "b-", linewidth=2)
+        plt.title("ELO Rating Progression")
+        plt.xlabel("Training Iteration")
+        plt.ylabel("ELO Rating")
         plt.grid(True, alpha=0.3)
-        
-        # Win rate progression
+
         if self.game_results:
             plt.subplot(2, 2, 2)
-            win_rates = [result.get('win_rate', 0) for result in self.game_results]
-            plt.plot(iterations[:len(win_rates)], win_rates, 'g-', linewidth=2)
-            plt.title('Win Rate Progression')
-            plt.xlabel('Training Iteration')
-            plt.ylabel('Win Rate')
+            win_rates = [result.get("win_rate", 0) for result in self.game_results]
+            plt.plot(iterations[:len(win_rates)], win_rates, "g-", linewidth=2)
+            plt.title("Win Rate Progression")
+            plt.xlabel("Training Iteration")
+            plt.ylabel("Win Rate")
             plt.grid(True, alpha=0.3)
-        
+
         plt.tight_layout()
-        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.savefig(save_path, dpi=300, bbox_inches="tight")
         plt.close()
         print(f"Performance trends plot saved to {save_path}")
 
 
 def create_elo_rating_system():
-    """
-    Create a standardized ELO rating system for Baghchal.
-    
-    :return: ELO rating system configuration
-    """
     return {
-        'initial_rating': 1200,
-        'k_factors': {
-            'new_player': 40,      # High volatility for new players
-            'established': 32,      # Standard volatility
-            'master': 16           # Low volatility for high-rated players
+        "initial_rating": 1200,
+        "k_factors": {
+            "new_player": 40,
+            "established": 32,
+            "master": 16,
         },
-        'rating_categories': {
-            'beginner': (0, 1200),
-            'intermediate': (1200, 1600),
-            'advanced': (1600, 2000),
-            'expert': (2000, 2400),
-            'master': (2400, 3000)
-        }
+        "rating_categories": {
+            "beginner": (0, 1200),
+            "intermediate": (1200, 1600),
+            "advanced": (1600, 2000),
+            "expert": (2000, 2400),
+            "master": (2400, 3000),
+        },
     }
 
 
 def estimate_elo_from_win_rate(win_rate, opponent_elo=1200):
-    """
-    Estimate ELO rating from win rate against a known opponent.
-    
-    :param win_rate: Win rate (0.0 to 1.0)
-    :param opponent_elo: ELO rating of the opponent
-    :return: Estimated ELO rating
-    """
     if win_rate <= 0 or win_rate >= 1:
         return opponent_elo
-    
-    # Calculate ELO difference needed for this win rate
     elo_diff = 400 * np.log10(win_rate / (1 - win_rate))
-    estimated_elo = opponent_elo + elo_diff
-    
-    return max(100, estimated_elo)  # Minimum ELO of 100
-
-
-# Import copy for the evaluator class
-import copy
+    return max(100, opponent_elo + elo_diff)

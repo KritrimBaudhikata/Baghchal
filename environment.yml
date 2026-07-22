@@ -1,0 +1,11 @@
+# Conda environment for Baghchal (optional; use venv + pip if you prefer)
+name: baghchal
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - pip
+  - pip:
+    - -r requirements.txt
+# For GPU training: ensure CUDA toolkit matches your TensorFlow build (e.g. conda install cudatoolkit).

@@ -1,0 +1,30 @@
+# Baghchal training and app configuration
+
+training:
+  num_iterations: 20
+  games_per_iteration: 20
+  batch_size: 64
+  learning_rate: 0.001
+  num_simulations: 100
+  save_dir: models
+  # MCTS batch size for leaf evaluation (e.g. 32); 0 or 1 = sequential
+  mcts_batch_size: 32
+  # Parallel self-play workers (0 = sequential)
+  parallel_workers: 0
+
+evaluation:
+  initial_games: 20
+  initial_simulations: 50
+  final_games: 50
+  final_simulations: 100
+  base_elo: 1200
+
+# Paths (override with env: BAGHCHAL_MODEL_PATH, BAGHCHAL_SAVE_DIR)
+paths:
+  model_dir: models
+  default_model: models/final_bagh_chal_model.keras
+
+# API (for web app)
+api:
+  port: 8080
+  host: 0.0.0.0

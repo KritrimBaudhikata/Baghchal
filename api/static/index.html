@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Baghchal – Play vs AI</title>
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 1rem auto; padding: 0 1rem; }
+    h1 { font-size: 1.25rem; }
+    .row { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; }
+    .board { display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; width: min(90vw, 360px); aspect-ratio: 1; margin: 1rem auto; }
+    .cell { aspect-ratio: 1; border: 1px solid #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; cursor: pointer; background: #f5e6d3; }
+    .cell:hover { background: #ede0c9; }
+    .cell.tiger { background: #c4a574; font-weight: bold; }
+    .cell.goat { background: #8b7355; color: #fff; }
+    .cell.selected { outline: 3px solid #0a0; }
+    .cell.legal { box-shadow: inset 0 0 0 2px #2563eb; }
+    .status { margin: 0.5rem 0; min-height: 1.5em; }
+    .thinking { opacity: 0.7; }
+    button, select { margin: 0.25rem; padding: 0.4rem 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>Baghchal</h1>
+  <p>Choose your side. The server enforces legal moves and current-turn sync.</p>
+  <div class="row">
+    <label for="side">Play as:</label>
+    <select id="side">
+      <option value="goat">Goat</option>
+      <option value="tiger">Tiger</option>
+    </select>
+    <button id="newGame">New game</button>
+  </div>
+  <div class="status" id="status">Start a new game.</div>
+  <div class="board" id="board"></div>
+
+  <script>
+    const API = '';
+    let gameId = null;
+    let selected = null;
+    let latestState = null;
+    let legalMoves = [];
+
+    const boardEl = document.getElementById('board');
+    const statusEl = document.getElementById('status');
+    const sideEl = document.getElementById('side');
+
+    function actionKey(action) {
+      if (action.type === 'place') {
+        return `P:${action.to.row},${action.to.col}`;
+      }
+      return `M:${action.from.row},${action.from.col}->${action.to.row},${action.to.col}`;
+    }
+
+    function legalMoveSet() {
+      const set = new Set();
+      for (const move of legalMoves) set.add(actionKey(move));
+      return set;
+    }
+
+    async function fetchState() {
+      const response = await fetch(`${API}/api/game/${gameId}`);
+      if (!response.ok) return null;
+      latestState = await response.json();
+      return latestState;
+    }
+
+    async function fetchLegalMoves() {
+      if (!gameId) return [];
+      const response = await fetch(`${API}/api/game/${gameId}/legal-moves`);
+      if (!response.ok) return [];
+      const payload = await response.json();
+      legalMoves = payload.legal_moves || [];
+      return legalMoves;
+    }
+
+    function render(board, status, current_player, highlight) {
+      boardEl.innerHTML = '';
+      const legalSet = legalMoveSet();
+
+      for (let r = 0; r < 5; r++) {
+        for (let c = 0; c < 5; c++) {
+          const cell = document.createElement('div');
+          cell.className = 'cell';
+          cell.dataset.row = r;
+          cell.dataset.col = c;
+
+          const value = board[r][c];
+          if (value === 1) { cell.classList.add('tiger'); cell.textContent = 'T'; }
+          else if (value === 2) { cell.classList.add('goat'); cell.textContent = 'G'; }
+
+          if (highlight && highlight[0] === r && highlight[1] === c) {
+            cell.classList.add('selected');
+          }
+
+          const isLegalPlacement = legalSet.has(`P:${r},${c}`);
+          const isLegalFrom = legalMoves.some(m => m.type === 'move' && m.from.row === r && m.from.col === c);
+          if (isLegalPlacement || isLegalFrom) {
+            cell.classList.add('legal');
+          }
+
+          cell.addEventListener('click', () => onClick(r, c));
+          boardEl.appendChild(cell);
+        }
+      }
+
+      const sideInfo = latestState ? `You: ${latestState.human_side}, AI: ${latestState.ai_side}` : '';
+      const msg = status === 'ongoing'
+        ? `Turn: ${current_player}. ${sideInfo}`
+        : `Game over: ${status}. ${sideInfo}`;
+      statusEl.textContent = msg;
+      statusEl.classList.toggle('thinking', false);
+    }
+
+    function isHumanTurn() {
+      return latestState && latestState.status === 'ongoing' && latestState.current_player === latestState.human_side;
+    }
+
+    async function refreshAndRender() {
+      const state = await fetchState();
+      if (!state) return;
+      await fetchLegalMoves();
+      render(state.board, state.status, state.current_player, selected);
+    }
+
+    async function submitMove(moveBody) {
+      statusEl.textContent = 'Thinking...';
+      statusEl.classList.add('thinking');
+      const response = await fetch(`${API}/api/game/${gameId}/move`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(moveBody)
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        statusEl.textContent = error.detail || 'Invalid move';
+        statusEl.classList.remove('thinking');
+        await refreshAndRender();
+        return false;
+      }
+      latestState = await response.json();
+      selected = null;
+      if (latestState.ai_pending) {
+        statusEl.textContent = 'AI pending — retrying...';
+        await retryAiMove();
+      }
+      await fetchLegalMoves();
+      render(latestState.board, latestState.status, latestState.current_player);
+      return true;
+    }
+
+    async function retryAiMove() {
+      if (!gameId) return;
+      statusEl.textContent = 'AI thinking (retry)...';
+      statusEl.classList.add('thinking');
+      const response = await fetch(`${API}/api/game/${gameId}/ai-move`, { method: 'POST' });
+      if (response.ok) {
+        latestState = await response.json();
+      }
+      statusEl.classList.remove('thinking');
+    }
+
+    async function onClick(row, col) {
+      if (!gameId) return;
+      if (!latestState) await refreshAndRender();
+      if (!isHumanTurn()) return;
+
+      const inPlacement = latestState.goats_placed < 20 && latestState.current_player === 'goat';
+      const legalSet = legalMoveSet();
+
+      if (inPlacement) {
+        const key = `P:${row},${col}`;
+        if (!legalSet.has(key)) return;
+        await submitMove({ type: 'place', row, col });
+        return;
+      }
+
+      if (selected === null) {
+        const canSelect = legalMoves.some(m => m.type === 'move' && m.from.row === row && m.from.col === col);
+        if (!canSelect) return;
+        selected = [row, col];
+        render(latestState.board, latestState.status, latestState.current_player, selected);
+        return;
+      }
+
+      const [sr, sc] = selected;
+      if (sr === row && sc === col) {
+        selected = null;
+        render(latestState.board, latestState.status, latestState.current_player);
+        return;
+      }
+
+      const key = `M:${sr},${sc}->${row},${col}`;
+      if (!legalSet.has(key)) return;
+      await submitMove({ type: 'move', from_row: sr, from_col: sc, to_row: row, to_col: col });
+    }
+
+    async function newGame() {
+      const human_side = sideEl.value;
+      const response = await fetch(`${API}/api/game`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ human_side })
+      });
+      if (!response.ok) {
+        statusEl.textContent = 'Failed to create game';
+        return;
+      }
+      latestState = await response.json();
+      gameId = latestState.game_id;
+      selected = null;
+      await fetchLegalMoves();
+      render(latestState.board, latestState.status, latestState.current_player);
+    }
+
+    document.getElementById('newGame').addEventListener('click', newGame);
+    const emptyBoard = [[1,0,0,0,1],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[1,0,0,0,1]];
+    render(emptyBoard, 'ongoing', 'goat');
+  </script>
+</body>
+</html>

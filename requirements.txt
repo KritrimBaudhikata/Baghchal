@@ -1,8 +1,14 @@
-tensorflow
-numpy
-scipy
-joblib
-matplotlib
-scikit-learn
-pandas
-seaborn
+# Baghchal AlphaZero - pin major versions for reproducibility
+tensorflow>=2.10,<2.20
+numpy>=1.24,<2
+scipy>=1.9
+joblib>=1.2
+matplotlib>=3.5
+scikit-learn>=1.2
+pandas>=1.5
+seaborn>=0.12
+# Config and API
+pyyaml>=6.0
+fastapi>=0.100
+uvicorn[standard]>=0.22
+httpx>=0.24

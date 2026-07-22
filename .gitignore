@@ -1,6 +1,33 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.conda/
+
+# IDE
+.idea/
+.vscode/
+
+# Models & eval artifacts
+*.h5
+*.keras
+initial_evaluation.json
+final_evaluation.json
+
+# Local / generated noise
+tree_output.txt
+tree.txt
+structure.py
+Baghchal.docx
+test_gpu.py
+test_gpu_force.py
+test_tensorflow.py
+training/self_play_debug.py
+
+# Old paths (if still relevant)
 /.khelai
 /old code
 /old code.rar
-/structure.py
-/tree.txt
-/__pycache__

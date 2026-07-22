@@ -1,0 +1,14 @@
+tensorflow==2.15.0
+numpy==1.26.4
+scipy==1.13.1
+joblib==1.5.2
+matplotlib==3.10.6
+scikit-learn==1.2.2
+pandas==2.3.2
+seaborn==0.13.2
+PyYAML==6.0.2
+uvicorn==0.49.0
+httpx==0.28.1
+
+# Not installed in this environment (install via requirements.txt):
+# fastapi

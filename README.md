@@ -51,15 +51,52 @@ Baghchal is a strategic board game where 4 tigers attempt to capture 20 goats, w
    cd Baghchal
    ```
 
-2. **Install dependencies**
+2. **Create an environment** (use one of):
+   - **venv**: `python -m venv .venv` then activate (e.g. `.venv\Scripts\activate` on Windows, `source .venv/bin/activate` on Linux/Mac).
+   - **conda**: `conda env create -f environment.yml` then `conda activate baghchal`.
+
+3. **Install dependencies**
    ```bash
    pip install -r requirements.txt
    ```
 
-3. **Verify installation**
+4. **Verify GPU** (recommended for training)
+   ```bash
+   python test_gpu.py
+   ```
+
+5. **Verify installation**
    ```bash
    python tests/test_system.py
    ```
+
+### Resuming training and inference
+
+- **Resume from checkpoint**: `python main.py --resume models/bagh_chal_model_iter_5.keras`
+- **Config**: Edit `config.yaml` for iterations, batch size, paths. Override with env: `BAGHCHAL_SAVE_DIR`, `BAGHCHAL_MODEL_PATH`.
+- **Run inference** (after training a model): `python run_inference.py models/final_bagh_chal_model.keras --games 3`
+
+### Run API locally (play in browser)
+
+1. Train and save a model (e.g. `models/final_bagh_chal_model.keras`).
+2. From the project root:
+   ```bash
+   set BAGHCHAL_MODEL_PATH=models\final_bagh_chal_model.keras
+   uvicorn api.app:app --reload --port 8080
+   ```
+   (On Linux/Mac use `export BAGHCHAL_MODEL_PATH=...` and forward slash.)
+3. Open http://localhost:8080 and click **New game**. You play Goats; the AI plays Tigers.
+
+### Deploy to cloud (Railway, Render, Fly.io)
+
+1. **Build**: Ensure a trained model is available. Either copy it into `models/` before building, or mount it at runtime.
+2. **Docker**: From project root:
+   ```bash
+   docker build -t baghchal .
+   docker run -p 8080:8080 -v "%cd%\models:/app/models" baghchal
+   ```
+   (Use `$(pwd)/models:/app/models` on Linux/Mac.) Set `MODEL_PATH=/app/models/final_bagh_chal_model.keras` if your file name differs.
+3. **Platform**: Deploy the container to Railway, Render, or Fly.io using their Docker workflow. Set the port to **8080** and the start command to the default (uvicorn). On free tiers the app may spin down when idle; the first request after idle may be slow while the model loads.
 
 ## 🎮 Game Rules
 
@@ -182,22 +219,24 @@ print(f"Estimated ELO: {results['estimated_elo']:.0f}")
 Baghchal/
 ├── baghchal.py              # Main game engine
 ├── main.py                  # Training entry point
+├── run_inference.py         # Inference script (load model, run games)
+├── config.yaml              # Training and API config
+├── config_loader.py         # Config loader with env overrides
+├── game_actions.py         # Shared action encoding (0–64)
 ├── requirements.txt         # Dependencies
-├── README.md               # This file
-├── models/                 # Neural network models
-│   ├── __init__.py
-│   ├── neural_network.py   # Network architecture
+├── Dockerfile               # Container for API + frontend
+├── api/                     # Web play vs AI
+│   ├── app.py              # FastAPI app (new game, move, AI)
+│   └── static/index.html   # Single-page board UI
+├── models/                  # Neural network
+│   ├── neural_network.py   # Architecture, load/save .keras
 │   └── utils.py            # Performance evaluation
-├── training/               # Training components
-│   ├── __init__.py
-│   ├── mcts.py            # Monte Carlo Tree Search
-│   ├── self_play.py       # Self-play generation
-│   └── training_loop.py    # Training pipeline
-├── tests/                  # Test files
-│   └── test_system.py     # System verification tests
-└── notebooks/              # Jupyter notebooks
-    ├── exploration.ipynb   # Data exploration
-    └── test.ipynb         # Testing and validation
+├── training/                # MCTS, self-play, training loop
+│   ├── mcts.py             # Batched MCTS
+│   ├── self_play.py        # Sequential and parallel self-play
+│   └── training_loop.py    # Training pipeline, checkpoint manifest
+├── tests/
+└── notebooks/
 ```
 
 ## 🧪 Testing
